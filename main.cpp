@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
     }
 
     // Set resolution
-    init.type = bgfx::RendererType::Count;
+    init.type = bgfx::RendererType::Direct3D11;
     init.vendorId = BGFX_PCI_ID_NONE;
     init.resolution.width = width;
     init.resolution.height = height;
