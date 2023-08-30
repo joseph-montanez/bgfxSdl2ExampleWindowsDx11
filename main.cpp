@@ -355,9 +355,15 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+std::filesystem::path getExecutablePath() {
+    TCHAR buffer[MAX_PATH] = { 0 };
+    GetModuleFileName(GetModuleHandle(nullptr), buffer, MAX_PATH);
+    return std::filesystem::canonical(buffer);
+}
 
 char* App_GetAssetPath(const char* assetName, const char* ofType) {
-    std::string pathStr = (std::filesystem::current_path() / (std::string(assetName) + "." + ofType)).string();
+    std::filesystem::path execPath = getExecutablePath();
+    std::string pathStr = (execPath.parent_path() / (std::string(assetName) + "." + ofType)).string();
     char* pathCStr = new char[pathStr.length() + 1];
     strcpy_s(pathCStr, pathStr.length() + 1, pathStr.c_str());
     return pathCStr;
