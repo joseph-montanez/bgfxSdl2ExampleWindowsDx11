@@ -1,4 +1,3 @@
-#include <ctime>
 #include <thread>
 #include <functional>
 #include <iostream>
@@ -16,20 +15,19 @@
 
 // Primitives
 bool initialized;
-int done, frameCount, windowWidth, windowHeight;
+int done, frameCount;
 
 // SDL2
 SDL_Event event;
 std::unique_ptr<SDL_Window, SDL_WindowDeleter> window;
-SDL_Surface* surface = nullptr;
+SDL_Surface *surface = nullptr;
 
 // BGFX
 bgfx::Init init{};
 bgfx::VertexLayout s_layout;
-bgfx::InstanceDataBuffer idb{};
 uint16_t error{};
-uint32_t width{}, height{};
-const bgfx::Memory* vertexShader{}, *fragmentShader{};
+uint32_t windowWidth{}, windowHeight{};
+const bgfx::Memory *vertexShader{}, *fragmentShader{};
 bgfx::VertexBufferHandle vb{};
 bgfx::IndexBufferHandle ib{};
 bgfx::UniformHandle s_texColor{};
@@ -39,31 +37,29 @@ bgfx::TextureHandle bunnyTexture{};
 bgfx::ShaderHandle vsHandle, fsHandle;
 
 // Graphics data arrays and pointers
-float transformData[8192 * 16]{}, view[16]{}, proj[16]{};
-App_Vertex vertices[4]{};
-uint16_t indices[6]{};
-const bgfx::Memory* memVertices{}, *memIndices{};
+float view[16]{}, proj[16]{};
+std::vector<App_Vertex> vertices;
+std::vector<uint16_t> indices;
+const bgfx::Memory *memVertices{}, *memIndices{};
 
 // Containers and data structures
 SpriteMap sprites;
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     frameCount = 0;
     auto lastTime = std::chrono::high_resolution_clock::now();
 
-    /* seed random number generator */
-    srand(time(nullptr));
+    windowWidth = 800;
+    windowHeight = 450;
 
-    width = 800;
-    height = 450;
-
-    //-- Initialize BGFX & SDL2
+    //------------------------------------------------------------------------------------------------------------------
+    //-- 1) Initialize BGFX & SDL2 (DirectX 11)
+    //------------------------------------------------------------------------------------------------------------------
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
     SDL_SetHint(SDL_HINT_RENDER_DIRECT3D11_DEBUG, "1");
 
     // Initialize SDL
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(0 | SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
         return 1;
     }
@@ -72,7 +68,7 @@ int main(int argc, char *argv[])
             "App",
             SDL_WINDOWPOS_CENTERED,
             SDL_WINDOWPOS_CENTERED,
-            (int)width, (int)height,
+            (int) windowWidth, (int) windowHeight,
             SDL_WINDOW_SHOWN
     ));
 
@@ -82,10 +78,9 @@ int main(int argc, char *argv[])
     }
 
     std::cout << "Available SDL Video Drivers" << std::endl;
-    for( int i = 0; i < SDL_GetNumRenderDrivers(); ++i )
-    {
+    for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i) {
         SDL_RendererInfo rendererInfo = {};
-        SDL_GetRenderDriverInfo( i, &rendererInfo );
+        SDL_GetRenderDriverInfo(i, &rendererInfo);
         std::cout << "\t" << rendererInfo.name << std::endl;
     }
 
@@ -100,8 +95,8 @@ int main(int argc, char *argv[])
     // Set resolution
     init.type = bgfx::RendererType::Direct3D11;
     init.vendorId = BGFX_PCI_ID_NONE;
-    init.resolution.width = width;
-    init.resolution.height = height;
+    init.resolution.width = windowWidth;
+    init.resolution.height = windowHeight;
     init.resolution.reset = BGFX_RESET_VSYNC;
     init.platformData.ndt = wmi.info.win.window;
     init.platformData.nwh = nullptr;
@@ -113,7 +108,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    bgfx::reset(width, height, BGFX_RESET_VSYNC, init.resolution.format);
+    bgfx::reset(windowWidth, windowHeight, BGFX_RESET_VSYNC, init.resolution.format);
 
     if (bgfx::getRendererType() == bgfx::RendererType::Enum::Direct3D11) {
         std::cout << "BGFX Render Type: DirectX11" << std::endl;
@@ -122,48 +117,55 @@ int main(int argc, char *argv[])
     App_PrintInitDetails(init);
 
     bgfx::setDebug(BGFX_DEBUG_STATS | BGFX_DEBUG_TEXT);
-    
-    SDL_GetWindowSize(window.get(), &windowWidth, &windowHeight);
-    bgfx::frame();
-    
-    //-- Initialize BGFX Resources
 
+    bgfx::frame();
+
+    SDL_SetWindowSize(window.get(), (int) windowWidth, (int) windowHeight);
+    SDL_GetWindowSize(window.get(), reinterpret_cast<int *>(&windowWidth), reinterpret_cast<int *>(&windowHeight));
+
+    //------------------------------------------------------------------------------------------------------------------
+    //-- 2) Create BGFX Resources
+    //------------------------------------------------------------------------------------------------------------------
     // Set up the vertex layout
     s_layout.begin()
             .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
             .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
             .end();
 
-    // Define your sprite vertices (for a quad)
-    vertices[0] = { 0.0f, 32.0f, 0.0f, 0.0f, 1.0f };  // bottom-left
-    vertices[1] = { 32.0f, 32.0f, 0.0f, 1.0f, 1.0f }; // bottom-right
-    vertices[2] = { 32.0f, 0.0f, 0.0f, 1.0f, 0.0f };  // top-right
-    vertices[3] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };    // top-left
+    std::array<App_Vertex, 4> vertexData = {
+            App_Vertex{0.0f, 32.0f, 0.0f, 0.0f, 1.0f},  // bottom-left
+            App_Vertex{32.0f, 32.0f, 0.0f, 1.0f, 1.0f}, // bottom-right
+            App_Vertex{32.0f, 0.0f, 0.0f, 1.0f, 0.0f},  // top-right
+            App_Vertex{0.0f, 0.0f, 0.0f, 0.0f, 0.0f}    // top-left
+    };
 
-    // Define indices for your quad
-    indices[0] = 0;
-    indices[1] = 1;
-    indices[2] = 2;
-    indices[3] = 0;
-    indices[4] = 2;
-    indices[5] = 3;
+    std::array<uint16_t, 6> indexData = {
+            0, 1, 2, 0, 2, 3
+    };
 
-    memVertices = bgfx::copy(vertices, sizeof(App_Vertex) * 4);
+    vertices = std::vector<App_Vertex>(vertexData.begin(), vertexData.end());
+    indices = std::vector<uint16_t>(indexData.begin(), indexData.end());
+
+    memVertices = bgfx::copy(vertices.data(), sizeof(App_Vertex) * vertices.size());
     vb = bgfx::createVertexBuffer(memVertices, s_layout);
 
-    memIndices = bgfx::copy(indices, sizeof(uint16_t) * 6);
+    memIndices = bgfx::copy(indices.data(), sizeof(uint16_t) * indices.size());
     ib = bgfx::createIndexBuffer(memIndices);
 
     s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
 
-    std::unique_ptr<char, CharDeleter> vs_texture(App_GetAssetPath(R"(assets\shaders\directx11\vs_texture)", "bin"));
+    std::unique_ptr<char, CharDeleter> vs_texture(
+    App_GetAssetPath(R"(assets\shaders\directx11\vs_texture)", "bin")
+    );
 
     if (!vs_texture) {
         std::cerr << "Failed to load vertex shader from assets\n";
         return 1;  // Or handle the error appropriately
     }
 
-    std::unique_ptr<char, CharDeleter> fs_texture(App_GetAssetPath(R"(assets\shaders\directx11\fs_texture)", "bin"));
+    std::unique_ptr<char, CharDeleter> fs_texture(
+        App_GetAssetPath(R"(assets\shaders\directx11\fs_texture)", "bin")
+    );
 
     if (!fs_texture) {
         std::cerr << "Failed to load fragment shader from assets\n";
@@ -195,10 +197,15 @@ int main(int argc, char *argv[])
         std::cerr << "Program not valid\n";
     }
 
-    std::unique_ptr<char, CharDeleter> path(App_GetAssetPath(R"(assets\wabbit_alpha)", "png"));
+    std::unique_ptr<char, CharDeleter> path(
+        App_GetAssetPath(R"(assets\wabbit_alpha)", "png")
+    );
 
-    bunnyTexture = App_LoadTexture(path.get(), &surface, &width, &height);
+    bunnyTexture = App_LoadTexture(path.get(), &surface, &windowWidth, &windowHeight);
 
+    //------------------------------------------------------------------------------------------------------------------
+    //-- 3) Render Loop
+    //------------------------------------------------------------------------------------------------------------------
     done = 0;
     while (!done) {
 
@@ -208,55 +215,40 @@ int main(int argc, char *argv[])
             }
         }
 
+        //-- Add 1 sprite every frame until there are 100 sprites
         for (int i = 0; i < 1; ++i) {
             if (sprites.size() < 100) {
-                App_Sprite sprite;
-
-                sprite.textureId = 0;
-
-                sprite.position[0] = 800. / 2.;
-                sprite.position[1] = 450. / 2.;
-                sprite.position[2] = 0;
-
-                sprite.scale[0] = 1.0;
-                sprite.scale[1] = 1.0;
-                sprite.scale[2] = 1.0;
-
-                sprite.size[0] = 32.0;
-                sprite.size[1] = 32.0;
-
-                sprite.rotation[0] = 0.0;
-                sprite.rotation[1] = 0.0;
-                sprite.rotation[2] = 0.0;
-
-                sprite.color[0] = 255;
-                sprite.color[1] = 255;
-                sprite.color[2] = 255;
-                sprite.color[3] = 255;
-
-                sprite.speed[0] = App_GetRandomFloat(-250.f, 250.f) / 60.f;
-                sprite.speed[1] = App_GetRandomFloat(-250.f, 250.f) / 60.f;
+                App_Sprite sprite = {
+                        0,
+                        {windowWidth / 2., windowHeight / 2., 0.0},
+                        {1.0, 1.0, 1.0},
+                        {32.0, 32.0},
+                        {0.0, 0.0, 0.0},
+                        {255, 255, 255, 255},
+                        {
+                                App_GetRandomFloat(-250.f, 250.f) / 60.f,
+                                App_GetRandomFloat(-250.f, 250.f) / 60.f
+                        }
+                };
 
                 sprites[{sprites.size() + 1, 0}] = sprite;
             }
         }
 
 
-        for (auto& pair : sprites) {
-            auto& sprite = pair.second;
+        for (auto &pair: sprites) {
+            auto &sprite = pair.second;
 
             sprite.position[0] += sprite.speed[0];
             sprite.position[1] += sprite.speed[1];
 
             if ((sprite.position[0] + (sprite.size[0] / 2) + 16) > windowWidth ||
-                (sprite.position[0] - (sprite.size[0] / 2) + 16) < 0)
-            {
+                (sprite.position[0] - (sprite.size[0] / 2) + 16) < 0) {
                 sprite.speed[0] *= -1;
             }
 
             if ((sprite.position[1] + (sprite.size[1] / 2) + 16) > windowHeight ||
-                (sprite.position[1] - (sprite.size[1] / 2) + 16) < 0)
-            {
+                (sprite.position[1] - (sprite.size[1] / 2) + 16) < 0) {
                 sprite.speed[1] *= -1;
             }
         }
@@ -264,17 +256,12 @@ int main(int argc, char *argv[])
         bgfx::setViewRect(0, 0, 0, windowWidth, windowHeight);
         bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
 
-        bx::mtxOrtho(proj, 0, (float) windowWidth, (float) windowHeight, 0, -100, 100, 0.0f, bgfx::getCaps()->homogeneousDepth);
+        bx::mtxOrtho(proj, 0, (float) windowWidth, (float) windowHeight, 0, -100, 100, 0.0f,
+                     bgfx::getCaps()->homogeneousDepth);
         bx::mtxIdentity(view);
         bgfx::setViewTransform(0, view, proj);
 
-        bool enableBatchRendering = true;
-
-        int currentBatchSize = 0;
-        int batchCount = 0;
-
-        for (const auto& pair : sprites) {
-            const auto &key = pair.first;
+        for (const auto &pair: sprites) {
             const auto &sprite = pair.second;
 
             auto x = (float) sprite.position[0];
@@ -297,7 +284,7 @@ int main(int argc, char *argv[])
 
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_BLEND_ALPHA | BGFX_STATE_DEPTH_TEST_LESS);
 
-            bgfx::submit(0, program);
+            bgfx::submit(0, program, 0, BGFX_DISCARD_ALL);
         }
 
         bgfx::touch(0);
@@ -321,6 +308,9 @@ int main(int argc, char *argv[])
         bgfx::frame();
     }
 
+    //------------------------------------------------------------------------------------------------------------------
+    //-- 4) Shutdown
+    //------------------------------------------------------------------------------------------------------------------
     bgfx::destroy(s_texColor);
 
     if (bgfx::isValid(vb)) {
@@ -348,6 +338,7 @@ int main(int argc, char *argv[])
     }
 
     bgfx::shutdown();
+
     SDL_FreeSurface(surface);
     SDL_DestroyWindow(window.get());
     SDL_Quit();
@@ -355,16 +346,16 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-std::filesystem::path getExecutablePath() {
-    TCHAR buffer[MAX_PATH] = { 0 };
+std::filesystem::path App_GetExecutablePath() {
+    TCHAR buffer[MAX_PATH] = {0};
     GetModuleFileName(GetModuleHandle(nullptr), buffer, MAX_PATH);
     return std::filesystem::canonical(buffer);
 }
 
-char* App_GetAssetPath(const char* assetName, const char* ofType) {
-    std::filesystem::path execPath = getExecutablePath();
+char *App_GetAssetPath(const char *assetName, const char *ofType) {
+    std::filesystem::path execPath = App_GetExecutablePath();
     std::string pathStr = (execPath.parent_path() / (std::string(assetName) + "." + ofType)).string();
-    char* pathCStr = new char[pathStr.length() + 1];
+    char *pathCStr = new char[pathStr.length() + 1];
     strcpy_s(pathCStr, pathStr.length() + 1, pathStr.c_str());
     return pathCStr;
 }
@@ -377,7 +368,7 @@ float App_GetRandomFloat(float min, float max) {
     return dist(rng);
 }
 
-uint8_t* App_LoadFileToMemory(const char* filename, uint32_t* size) {
+uint8_t *App_LoadFileToMemory(const char *filename, uint32_t *size) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
 
     if (!file.is_open()) {
@@ -388,14 +379,13 @@ uint8_t* App_LoadFileToMemory(const char* filename, uint32_t* size) {
     file.seekg(0, std::ios::beg);
 
     // Allocate buffer
-    auto* buffer = new uint8_t[fileSize];
-
+    auto *buffer = new(std::nothrow) uint8_t[fileSize];
     if (!buffer) {
         return nullptr;
     }
 
     // Read the file into buffer
-    if (!file.read(reinterpret_cast<char*>(buffer), fileSize)) {
+    if (!file.read(reinterpret_cast<char *>(buffer), fileSize)) {
         delete[] buffer;
         return nullptr;
     }
@@ -404,20 +394,20 @@ uint8_t* App_LoadFileToMemory(const char* filename, uint32_t* size) {
     return buffer;
 }
 
-const bgfx::Memory* App_LoadShader(const char* filename) {
+const bgfx::Memory *App_LoadShader(const char *filename) {
     uint32_t size;
-    uint8_t* shaderData = App_LoadFileToMemory(filename, &size);
+    uint8_t *shaderData = App_LoadFileToMemory(filename, &size);
 
     if (shaderData == nullptr) {
         return nullptr; // or handle the error appropriately
     }
 
-    return bgfx::makeRef(shaderData, size, [](void* _data, void* _userData) {
-        delete[] reinterpret_cast<uint8_t*>(_data);
+    return bgfx::makeRef(shaderData, size, [](void *_data, void *_userData) {
+        delete[] reinterpret_cast<uint8_t *>(_data);
     });
 }
 
-bgfx::TextureHandle App_LoadTexture(const char *file, SDL_Surface** pSurface, uint32_t *widthOut, uint32_t *heightOut) {
+bgfx::TextureHandle App_LoadTexture(const char *file, SDL_Surface **pSurface, uint32_t *widthOut, uint32_t *heightOut) {
     *pSurface = IMG_Load(file);
     if (!*pSurface) {
         printf("Error loading image: %s\n", IMG_GetError());
@@ -427,9 +417,9 @@ bgfx::TextureHandle App_LoadTexture(const char *file, SDL_Surface** pSurface, ui
     uint32_t surfaceWidth = (*pSurface)->w;
     uint32_t surfaceHeight = (*pSurface)->h;
     uint32_t pitch = (*pSurface)->pitch;
-    const auto* imagePixels = (const uint8_t*)(*pSurface)->pixels;
+    const auto *imagePixels = (const uint8_t *) (*pSurface)->pixels;
 
-    const bgfx::Memory* mem = bgfx::makeRef(imagePixels, pitch * surfaceHeight);
+    const bgfx::Memory *mem = bgfx::makeRef(imagePixels, pitch * surfaceHeight);
 
     if (widthOut) *widthOut = surfaceWidth;
     if (heightOut) *heightOut = surfaceHeight;
@@ -437,15 +427,15 @@ bgfx::TextureHandle App_LoadTexture(const char *file, SDL_Surface** pSurface, ui
     return bgfx::createTexture2D(surfaceWidth, surfaceHeight, false, 1, bgfx::TextureFormat::RGBA8, 0, mem);
 }
 
-void App_PrintInitDetails(const bgfx::Init& bgInit) {
+void App_PrintInitDetails(const bgfx::Init &bgInit) {
     std::cout
-            << "init.type              = "  << bgInit.type << std::endl
-            << "init.vendorId          = "  << bgInit.vendorId << std::endl
-            << "init.platformData.nwh  = "  << bgInit.platformData.nwh << std::endl
-            << "init.platformData.ndt  = "  << bgInit.platformData.ndt << std::endl
-            << "init.platformData.type = "  << bgInit.platformData.type << std::endl
-            << "init.resolution.width  = "  << bgInit.resolution.width << std::endl
-            << "init.resolution.height = "  << bgInit.resolution.height << std::endl
-            << "init.resolution.reset  = "  << bgInit.resolution.reset << std::endl
+            << "init.type              = " << bgInit.type << std::endl
+            << "init.vendorId          = " << bgInit.vendorId << std::endl
+            << "init.platformData.nwh  = " << bgInit.platformData.nwh << std::endl
+            << "init.platformData.ndt  = " << bgInit.platformData.ndt << std::endl
+            << "init.platformData.type = " << bgInit.platformData.type << std::endl
+            << "init.resolution.width  = " << bgInit.resolution.width << std::endl
+            << "init.resolution.height = " << bgInit.resolution.height << std::endl
+            << "init.resolution.reset  = " << bgInit.resolution.reset << std::endl
             << "init.resolution.format  = " << bgInit.resolution.format << std::endl;
 }

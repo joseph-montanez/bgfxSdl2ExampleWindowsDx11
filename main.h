@@ -7,7 +7,6 @@
 #include "SDL2_image/SDL_image.h"
 #include "bgfx/bgfx.h"
 
-// Structures
 struct CharDeleter {
     void operator()(char* ptr) const {
         free(ptr);
@@ -30,10 +29,7 @@ typedef struct {
     double speed[2];
 } App_Sprite;
 
-typedef struct App_Vertex {
-    float x, y, z;   // Position
-    float u, v;      // Texture coordinates
-} App_Vertex;
+using App_Vertex = std::tuple<float, float, float, float, float>;
 
 struct PairHash {
     template <class T1, class T2>
@@ -49,6 +45,7 @@ struct PairHash {
 using SpriteMap = std::unordered_map<std::pair<uint64_t, uint64_t>, App_Sprite, PairHash>;
 
 //-- Helper Functions
+std::filesystem::path App_GetExecutablePath();
 char* App_GetAssetPath(const char* assetName, const char* ofType);
 float App_GetRandomFloat(float min, float max);
 uint8_t* App_LoadFileToMemory(const char* filename, uint32_t* size);
